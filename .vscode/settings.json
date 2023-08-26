@@ -1,0 +1,14 @@
+{
+	"C_Cpp.default.compilerPath": "/usr/bin/g++",
+	"files.associations": {
+        "*.ejs": "html",
+        "types.h": "c",
+        "ip.h": "c",
+        "socket.h": "c",
+        "iostream": "cpp",
+        "vector": "cpp",
+        "format": "cpp",
+        "compare": "cpp",
+        "cstdint": "cpp"
+    }
+}
