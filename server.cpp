@@ -9,7 +9,6 @@
 #include <fcntl.h>
 #include <vector>
 #include <poll.h>
-#include <map>
 #include "hashtable.h"
 #include <string>
 
@@ -72,7 +71,7 @@ struct Entry
 };
 
 #define container_of(ptr, type, member) ({                  \
-    const typeof(  ((type *)0)->member ) *__mptr = (ptr);   \
+    typeof(  ((type *)0)->member ) *__mptr = (ptr);         \
     (type *)( (char *) __mptr - offsetof(type, member)); })
 
 static bool try_fill_buffer(Conn *conn);
@@ -101,9 +100,9 @@ static void die(const char *msg)
     abort();
 }
 
-static uint64_t str_hash(const uint8_t *data, size_t len)
+static u_int64_t str_hash(const uint8_t *data, size_t len)
 {
-    uint32_t h = 0x811C9DC5;
+    u_int64_t h = 0x811C9DC5;
     for (size_t i = 0; i < len; i++)
     {
         h = (h + data[i]) * 0x01000193;
@@ -272,7 +271,10 @@ static bool try_fill_buffer(Conn *conn)
     do
     {
         size_t cap = sizeof(conn->rbuf) - conn->rbuf_size;
+        // std::cout << "Read start" << std::endl;
+
         rv = read(conn->fd, &conn->rbuf[conn->rbuf_size], cap);
+        // std::cout << "Read Successful" << std::endl;
 
     } while (rv < 0 && errno == EINTR);
 
@@ -319,6 +321,7 @@ void print_string(uint8_t *buf, int32_t len)
 
 static bool try_one_request(struct Conn *conn)
 {
+
     if (conn->rbuf_size < 4)
     {
         // not enough data in the buffer
@@ -341,8 +344,12 @@ static bool try_one_request(struct Conn *conn)
         return false;
     }
 
-    // Got one request , now generate the response
+    assert(conn->rbuf_read + 4 + len < sizeof(conn->rbuf));
 
+    std::cout << "client says: ";
+    print_string(&conn->rbuf[conn->rbuf_read], len + 4);
+
+    // Got one request , now generate the response
     uint32_t rescode = 0;
     uint32_t wlen = 0;
     int32_t err = do_request(&conn->rbuf[4 + conn->rbuf_read], len, &rescode, &conn->wbuf[4 + 4], &wlen);
@@ -356,9 +363,6 @@ static bool try_one_request(struct Conn *conn)
     memcpy(&conn->wbuf[0], &wlen, 4);
     memcpy(&conn->wbuf[4], &rescode, 4);
     conn->wbuf_size = 4 + wlen;
-
-    std::cout << "client says: ";
-    print_string(&conn->rbuf[conn->rbuf_read], len + 4);
 
     // generating echoing response
     // memcpy(&conn->wbuf, &len, sizeof(len));
@@ -420,26 +424,27 @@ static int32_t parse_req(const uint8_t *data, uint32_t len, std::vector<std::str
 
 static bool entry_eq(HNode *lhs, HNode *rhs)
 {
-    struct Entry *le = container_of(lhs, struct Entry, node);
-    struct Entry *re = container_of(rhs, struct Entry, node);
+    struct Entry *le = container_of(lhs, Entry, node);
+    struct Entry *re = container_of(rhs, Entry, node);
+    std::cout << "lhs->hcode: " << lhs->hcode << " rhs->hcode: " << rhs->hcode << std::endl;
     return lhs->hcode == rhs->hcode && le->key == re->key;
 }
 
 static uint32_t do_get(std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
 {
     struct Entry key;
-    key.key.swap(cmd[1]);
-    key.node.hcode = str_hash((uint8_t *)key.key.data(), key.key.size());
+    swap(key.key, cmd[1]);
+    key.node.hcode = str_hash((uint8_t *)key.key.data(), key.key.length());
 
-    HNode *node = g_data.db.hm_lookup(&key.node, &entry_eq);
+    HNode *node = g_data.db.hm_lookup(&(key.node), &entry_eq);
     if (!node)
     {
         return RES_NX;
     }
-    const std::string &val = container_of(node, Entry, node)->val;
-    assert(val.size() <= k_max_msg);
-    memcpy(res, val.data(), val.size());
-    *reslen = (uint32_t)val.size();
+    std::string &val = container_of(node, Entry, node)->val;
+    assert(val.length() <= k_max_msg);
+    memcpy(res, val.data(), val.length());
+    *reslen = (uint32_t)val.length();
     return RES_OK;
 }
 
@@ -449,23 +454,24 @@ static uint32_t do_set(std::vector<std::string> &cmd, uint8_t *res, uint32_t *re
     (void)reslen;
 
     struct Entry key;
-    key.key.swap(cmd[1]);
-    key.node.hcode = str_hash((uint8_t *)key.key.data(), key.key.size());
+    swap(key.key, cmd[1]);
 
-    HNode *node = g_data.db.hm_lookup(&key.node, &entry_eq);
+    key.node.hcode = str_hash((uint8_t *)key.key.data(), key.key.length());
 
-    if (node)
+    HNode *nd = g_data.db.hm_lookup(&(key.node), &entry_eq);
+
+    if (nd)
     {
-        container_of(node, struct Entry, node)->val.swap(cmd[2]);
+        swap(container_of(&(key.node), Entry, node)->val, cmd[2]);
     }
     else
     {
         struct Entry *entry = new Entry();
-        entry->key.swap(key.key);
-        entry->val.swap(cmd[2]);
+        swap(entry->key, key.key);
+        swap(entry->val, cmd[2]);
         entry->node.hcode = key.node.hcode;
 
-        g_data.db.hm_insert(&entry->node);
+        g_data.db.hm_insert(&(entry->node));
     }
 
     return RES_OK;
@@ -477,10 +483,10 @@ static uint32_t do_del(std::vector<std::string> &cmd, uint8_t *res, uint32_t *re
     (void)reslen;
 
     struct Entry key;
-    key.key.swap(cmd[1]);
-    key.node.hcode = str_hash((uint8_t *)key.key.data(), key.key.size());
+    swap(key.key, cmd[1]);
+    key.node.hcode = str_hash((uint8_t *)key.key.data(), key.key.length());
 
-    HNode *node = g_data.db.hm_pop(&key.node, &entry_eq);
+    HNode *node = g_data.db.hm_pop(&(key.node), &entry_eq);
 
     if (node)
     {
@@ -492,6 +498,7 @@ static uint32_t do_del(std::vector<std::string> &cmd, uint8_t *res, uint32_t *re
 
 static int32_t do_request(const uint8_t *req, uint32_t reqlen, uint32_t *rescode, uint8_t *res, uint32_t *reslen)
 {
+
     std::vector<std::string> cmd;
     if (parse_req(req, reqlen, cmd) != 0)
     {

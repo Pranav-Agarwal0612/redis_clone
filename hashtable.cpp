@@ -28,6 +28,8 @@ HNode **HTab::h_lookup(HNode *key, bool (*cmp)(HNode *, HNode *))
     size_t pos = key->hcode & mask;
 
     HNode **from = &tab[pos];
+    if (!from)
+        return NULL;
     while (*from)
     {
         if (cmp(*from, key))

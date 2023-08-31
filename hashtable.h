@@ -1,6 +1,5 @@
 #include <string.h>
 #include <iostream>
-#include <bits/stdint-uintn.h>
 
 #ifndef HASHTABLE_H
 #define HASHTABLE_H
@@ -9,18 +8,28 @@ class HNode
 {
 public:
     HNode *next;
-    uint64_t hcode = 0;
+    u_int64_t hcode;
+
+    HNode()
+    {
+        next = NULL;
+        hcode = 0;
+    }
 };
 
 class HTab
 {
 public:
-    HNode **tab = NULL;
-    size_t mask = 0;
-    size_t slots = 0;
-    size_t size = 0;
+    HNode **tab;
+    size_t mask;
+    size_t slots;
+    size_t size;
 
-    HTab() = default;
+    HTab()
+    {
+        tab = NULL;
+        mask = slots = size = 0;
+    }
     HTab(size_t n);
 
     void insert(HNode *node);
