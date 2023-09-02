@@ -5,6 +5,10 @@ HTab::HTab(size_t n)
 {
     assert(n > 0 && ((n - 1) & n) == 0);
     tab = new HNode *[n];
+    for (size_t i = 0; i < n; i++)
+    {
+        tab[i] = NULL;
+    }
     mask = n - 1;
     size = 0;
     slots = n;

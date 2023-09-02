@@ -71,8 +71,8 @@ struct Entry
 };
 
 #define container_of(ptr, type, member) ({                  \
-    typeof(  ((type *)0)->member ) *__mptr = (ptr);         \
-    (type *)( (char *) __mptr - offsetof(type, member)); })
+    typeof(  ((type *)0)->member ) *__mptr = ptr;           \
+    (type *)( (size_t) __mptr - offsetof(type, member)); })
 
 static bool try_fill_buffer(Conn *conn);
 static void msg(const char *msg);
@@ -424,9 +424,8 @@ static int32_t parse_req(const uint8_t *data, uint32_t len, std::vector<std::str
 
 static bool entry_eq(HNode *lhs, HNode *rhs)
 {
-    struct Entry *le = container_of(lhs, Entry, node);
-    struct Entry *re = container_of(rhs, Entry, node);
-    std::cout << "lhs->hcode: " << lhs->hcode << " rhs->hcode: " << rhs->hcode << std::endl;
+    struct Entry *le = container_of(lhs, struct Entry, node);
+    struct Entry *re = container_of(rhs, struct Entry, node);
     return lhs->hcode == rhs->hcode && le->key == re->key;
 }
 
