@@ -35,6 +35,7 @@ public:
     void insert(HNode *node);
     HNode **h_lookup(HNode *key, bool (*cmp)(HNode *, HNode *));
     HNode *h_detach(HNode **from);
+    void h_scan(void (*f)(HNode *, void *), void *arg);
 };
 
 class HMap
@@ -47,6 +48,7 @@ public:
     HNode *hm_lookup(HNode *key, bool (*cmp)(HNode *, HNode *));
     void hm_insert(HNode *node);
     HNode *hm_pop(HNode *key, bool (*cmp)(HNode *, HNode *));
+    size_t hm_size();
 
 private:
     void hm_help_resizing();

@@ -38,6 +38,12 @@ enum
     SER_ARR = 4,
 };
 
+enum
+{
+    ERR_UNKNOWN = 1,
+    ERR_2BIG = 2,
+};
+
 // The data structure for the key space. This is just a placeholder
 // until we implement a hashtable in the next chapter.
 // static std::map<std::string, std::string> g_map;
@@ -86,7 +92,15 @@ static int32_t accept_new_conn(std::vector<Conn *> &fd2conn, int32_t fd);
 static void state_res(Conn *conn);
 static bool try_one_request(struct Conn *conn);
 static bool try_flush_buffer(struct Conn *conn);
-static int32_t do_request(const uint8_t *req, uint32_t reqlen, uint32_t *rescode, uint8_t *res, uint32_t *reslen);
+
+static void do_request(std::vector<std::string> &cmd, std::string &out);
+static int32_t parse_req(const uint8_t *data, uint32_t len, std::vector<std::string> &cmd);
+
+static void out_nil(std::string &out);
+static void out_str(std::string &out, const std::string &val);
+static void out_int(std::string &out, int64_t val);
+static void out_err(std::string &out, int32_t code, const std::string &msg);
+static void out_arr(std::string &out, uint32_t n);
 
 static void msg(const char *msg)
 {
@@ -349,19 +363,33 @@ static bool try_one_request(struct Conn *conn)
     std::cout << "client says: ";
     print_string(&conn->rbuf[conn->rbuf_read], len + 4);
 
-    // Got one request , now generate the response
-    uint32_t rescode = 0;
-    uint32_t wlen = 0;
-    int32_t err = do_request(&conn->rbuf[4 + conn->rbuf_read], len, &rescode, &conn->wbuf[4 + 4], &wlen);
-    if (err)
+    // Parse the request
+    std::vector<std::string> cmd;
+    if (0 != parse_req(&conn->rbuf[4 + conn->rbuf_read], len, cmd))
     {
+        msg("bad req");
         conn->state = STATE_END;
         return false;
     }
 
-    wlen += 4;
+    // Generate a response
+    std::string out;
+    do_request(cmd, out);
+
+    // Put response into the buffer
+    if (4 + out.size() > k_max_msg)
+    {
+        out.clear();
+        out_err(out, ERR_2BIG, "response is too big");
+    }
+
+    // Got one request , now generate the response
+    uint32_t rescode = 0;
+    uint32_t wlen = 0;
+
+    wlen += (uint32_t)out.size();
     memcpy(&conn->wbuf[0], &wlen, 4);
-    memcpy(&conn->wbuf[4], &rescode, 4);
+    memcpy(&conn->wbuf[4], out.data(), out.size());
     conn->wbuf_size = 4 + wlen;
 
     // generating echoing response
@@ -429,7 +457,13 @@ static bool entry_eq(HNode *lhs, HNode *rhs)
     return lhs->hcode == rhs->hcode && le->key == re->key;
 }
 
-static uint32_t do_get(std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
+static void cb_scan(HNode *node, void *arg)
+{
+    std::string &out = *(std::string *)arg;
+    out_str(out, container_of(node, Entry, node)->key);
+}
+
+static void do_get(std::vector<std::string> &cmd, std::string &out)
 {
     struct Entry key;
     swap(key.key, cmd[1]);
@@ -438,30 +472,24 @@ static uint32_t do_get(std::vector<std::string> &cmd, uint8_t *res, uint32_t *re
     HNode *node = g_data.db.hm_lookup(&(key.node), &entry_eq);
     if (!node)
     {
-        return RES_NX;
+        return out_nil(out);
     }
+
     std::string &val = container_of(node, Entry, node)->val;
-    assert(val.length() <= k_max_msg);
-    memcpy(res, val.data(), val.length());
-    *reslen = (uint32_t)val.length();
-    return RES_OK;
+    out_str(out, val);
 }
 
-static uint32_t do_set(std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
+static void do_set(std::vector<std::string> &cmd, std::string &out)
 {
-    (void)res;
-    (void)reslen;
-
     struct Entry key;
     swap(key.key, cmd[1]);
-
     key.node.hcode = str_hash((uint8_t *)key.key.data(), key.key.length());
 
     HNode *nd = g_data.db.hm_lookup(&(key.node), &entry_eq);
 
     if (nd)
     {
-        swap(container_of(&(key.node), Entry, node)->val, cmd[2]);
+        swap(container_of(nd, Entry, node)->val, cmd[2]);
     }
     else
     {
@@ -473,14 +501,11 @@ static uint32_t do_set(std::vector<std::string> &cmd, uint8_t *res, uint32_t *re
         g_data.db.hm_insert(&(entry->node));
     }
 
-    return RES_OK;
+    out_nil(out);
 }
 
-static uint32_t do_del(std::vector<std::string> &cmd, uint8_t *res, uint32_t *reslen)
+static void do_del(std::vector<std::string> &cmd, std::string &out)
 {
-    (void)res;
-    (void)reslen;
-
     struct Entry key;
     swap(key.key, cmd[1]);
     key.node.hcode = str_hash((uint8_t *)key.key.data(), key.key.length());
@@ -492,42 +517,40 @@ static uint32_t do_del(std::vector<std::string> &cmd, uint8_t *res, uint32_t *re
         delete container_of(node, struct Entry, node);
     }
 
-    return RES_OK;
+    out_int(out, node ? 1 : 0);
 }
 
-static int32_t do_request(const uint8_t *req, uint32_t reqlen, uint32_t *rescode, uint8_t *res, uint32_t *reslen)
+static void do_keys(std::vector<std::string> &cmd, std::string &out)
 {
+    (void)cmd;
+    out_arr(out, (uint32_t)g_data.db.hm_size());
+    g_data.db.ht1.h_scan(&cb_scan, &out);
+    g_data.db.ht2.h_scan(&cb_scan, &out);
+}
 
-    std::vector<std::string> cmd;
-    if (parse_req(req, reqlen, cmd) != 0)
+static void do_request(std::vector<std::string> &cmd, std::string &out)
+{
+    if (cmd.size() == 1 && cmd_is(cmd[0], "keys"))
     {
-        msg("bad req");
-        return -1;
+        do_keys(cmd, out);
     }
-
-    if (cmd.size() == 2 && cmd_is(cmd[0], "get"))
+    else if (cmd.size() == 2 && cmd_is(cmd[0], "get"))
     {
-        *rescode = do_get(cmd, res, reslen);
+        do_get(cmd, out);
     }
     else if (cmd.size() == 3 && cmd_is(cmd[0], "set"))
     {
-        *rescode = do_set(cmd, res, reslen);
+        do_set(cmd, out);
     }
     else if (cmd.size() == 2 && cmd_is(cmd[0], "del"))
     {
-        *rescode = do_del(cmd, res, reslen);
+        do_del(cmd, out);
     }
     else
     {
         // command is not recognised
-        *rescode = RES_ERR;
-        const char *msg = "Unknown cmd";
-        strcpy((char *)res, msg);
-        *reslen = strlen(msg);
-        return 0;
+        out_err(out, ERR_UNKNOWN, "Unknown command");
     }
-
-    return 0;
 }
 
 static void state_res(Conn *conn)
@@ -569,6 +592,40 @@ static bool try_flush_buffer(struct Conn *conn)
 
     // If data remaining in buffer, try to write again
     return true;
+}
+
+static void out_nil(std::string &out)
+{
+    out.push_back(SER_NIL);
+}
+
+static void out_str(std::string &out, const std::string &val)
+{
+    out.push_back(SER_STR);
+    uint32_t len = (uint32_t)val.length();
+    out.append((char *)&len, 4);
+    out.append(val);
+}
+
+static void out_int(std::string &out, int64_t val)
+{
+    out.push_back(SER_INT);
+    out.append((char *)&val, 8);
+}
+
+static void out_err(std::string &out, int32_t code, const std::string &msg)
+{
+    out.push_back(SER_ERR);
+    out.append((char *)&code, 4);
+    uint32_t len = (uint32_t)msg.length();
+    out.append((char *)&len, 4);
+    out.append(msg);
+}
+
+static void out_arr(std::string &out, uint32_t n)
+{
+    out.push_back(SER_ARR);
+    out.append((char *)&n, 4);
 }
 
 static void connection_io(Conn *conn)

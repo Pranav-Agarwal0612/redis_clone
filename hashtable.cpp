@@ -55,6 +55,21 @@ HNode *HTab::h_detach(HNode **from)
     return node;
 }
 
+void HTab::h_scan(void (*f)(HNode *, void *), void *arg)
+{
+    if (size == 0)
+        return;
+    for (size_t i = 0; i <= mask; i++)
+    {
+        HNode *node = tab[i];
+        while (node)
+        {
+            f(node, arg);
+            node = node->next;
+        }
+    }
+}
+
 const size_t k_resizing_work = 128;
 const size_t k_max_load_factor = 8;
 
@@ -141,4 +156,9 @@ HNode *HMap::hm_pop(HNode *key, bool (*cmp)(HNode *, HNode *))
         return ht2.h_detach(from);
     }
     return NULL;
+}
+
+size_t HMap::hm_size()
+{
+    return ht1.size + ht2.size;
 }

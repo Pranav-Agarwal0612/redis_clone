@@ -9,6 +9,15 @@
 #include <fcntl.h>
 #include <vector>
 
+enum
+{
+    SER_NIL = 0,
+    SER_ERR = 1,
+    SER_STR = 2,
+    SER_INT = 3,
+    SER_ARR = 4,
+};
+
 const size_t k_max_msg = 4096;
 
 static void msg(const char *msg)
@@ -163,6 +172,111 @@ static int32_t send_req(int fd, std::vector<std::string> &cmd)
 //     return 0;
 // }
 
+static int32_t on_response(const uint8_t *data, size_t size)
+{
+    if (size < 1)
+    {
+        msg("bad response");
+        return -1;
+    }
+    switch (data[0])
+    {
+
+    case SER_NIL:
+        std::cout << "(nil)" << std::endl;
+        return 1;
+
+    case SER_ERR:
+        if (size < 1 + 8)
+        {
+            msg("bad response");
+            return -1;
+        }
+        else
+        {
+            int32_t code = 0;
+            uint32_t len = 0;
+            memcpy(&code, &data[1], 4);
+            memcpy(&len, &data[1 + 4], 4);
+
+            if (size < 1 + 8 + len)
+            {
+                msg("bad response");
+                return -1;
+            }
+            std::cout << "(err) ";
+            std::cout.write((char *)&data[1 + 8], len);
+            std::cout << std::endl;
+            return 1 + 8 + len;
+        }
+
+    case SER_STR:
+        if (size < 1 + 4)
+        {
+            msg("bad response");
+            return -1;
+        }
+        else
+        {
+            uint32_t len = 0;
+            memcpy(&len, &data[1], 4);
+
+            if (size < 1 + 4 + len)
+            {
+                msg("bad response");
+                return -1;
+            }
+            std::cout << "(str) ";
+            std::cout.write((char *)&data[1 + 4], len);
+            std::cout << std::endl;
+            return 1 + 4 + len;
+        }
+
+    case SER_INT:
+        if (size < 1 + 8)
+        {
+            msg("bad response");
+            return -1;
+        }
+        else
+        {
+            int64_t val = 0;
+            memcpy(&val, &data[1], 8);
+            std::cout << "(int) " << val << std::endl;
+            return 1 + 8;
+        }
+
+    case SER_ARR:
+        if (size < 1 + 4)
+        {
+            msg("bad response");
+            return -1;
+        }
+        else
+        {
+            uint32_t len = 0;
+            memcpy(&len, &data[1], 4);
+            std::cout << "(arr) len=" << len << std::endl;
+            size_t arr_bytes = 1 + 4;
+            for (u_int32_t i = 0; i < len; i++)
+            {
+                int32_t rv = on_response(&data[arr_bytes], size - arr_bytes);
+                if (rv < 0)
+                {
+                    return rv;
+                }
+                arr_bytes += (size_t)rv;
+            }
+            std::cout << "(arr) end" << std::endl;
+            return (int32_t)arr_bytes;
+        }
+
+    default:
+        msg("bad response");
+        return -1;
+    }
+}
+
 static int32_t read_res(int fd, std::vector<std::string> &cmd)
 {
     char rbuf[4 + k_max_msg + 1];
@@ -198,18 +312,27 @@ static int32_t read_res(int fd, std::vector<std::string> &cmd)
     }
 
     // print the result
-    uint32_t rescode = 0;
-    if (len < 4)
+    // uint32_t rescode = 0;
+    // if (len < 4)
+    // {
+    //     msg("bad response");
+    //     return -1;
+    // }
+    // memcpy(&rescode, &rbuf[4], 4);
+    // // std::cout << ("server says: [%u] %.*s\n", rescode, len - 4, &rbuf[8]);
+    // std::cout << "Server says: [" << rescode << "] ";
+    // fprintf(stdout, "%.*s", len - 4, &rbuf[8]);
+    // std::cout << std::endl;
+    // return 0;
+
+    // print the result
+    int32_t rv = on_response((uint8_t *)&rbuf[4], len);
+    if (rv > 0 && (uint32_t)rv != len)
     {
         msg("bad response");
-        return -1;
+        rv = -1;
     }
-    memcpy(&rescode, &rbuf[4], 4);
-    // std::cout << ("server says: [%u] %.*s\n", rescode, len - 4, &rbuf[8]);
-    std::cout << "Server says: [" << rescode << "] ";
-    fprintf(stdout, "%.*s", len - 4, &rbuf[8]);
-    std::cout << std::endl;
-    return 0;
+    return rv;
 }
 
 int main(int argc, char **argv)
