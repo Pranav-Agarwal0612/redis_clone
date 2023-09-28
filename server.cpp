@@ -11,6 +11,7 @@
 #include <poll.h>
 #include "hashtable.h"
 #include <string>
+#include "avl.h"
 
 const size_t k_max_msg = 4096;
 const size_t k_max_args = 1024;
